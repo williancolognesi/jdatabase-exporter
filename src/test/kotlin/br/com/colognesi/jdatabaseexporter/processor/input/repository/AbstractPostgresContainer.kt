@@ -3,12 +3,17 @@ package br.com.colognesi.jdatabaseexporter.processor.input.repository
 import io.r2dbc.postgresql.PostgresqlConnectionConfiguration
 import io.r2dbc.postgresql.PostgresqlConnectionFactory
 import io.r2dbc.postgresql.api.PostgresqlConnection
-import io.r2dbc.spi.Connection
+import io.r2dbc.postgresql.api.PostgresqlResult
 import org.junit.Rule
+import org.slf4j.Logger
+import org.slf4j.LoggerFactory
 import org.testcontainers.containers.PostgreSQLContainer
+import reactor.core.publisher.Flux
 import reactor.core.publisher.Mono
 
-abstract class AbstractPostgresContainer {
+abstract class AbstractPostgresContainer(vararg migrations: String) {
+
+    private val logger: Logger = LoggerFactory.getLogger(AbstractPostgresContainer::class.java)
 
     @JvmField
     @Rule
@@ -29,6 +34,21 @@ abstract class AbstractPostgresContainer {
                 .username(postgresContainer.username).password(postgresContainer.password)
                 .database(postgresContainer.databaseName).port(postgresContainer.firstMappedPort).build()
         ).create()
+        connection.block().also { conn ->
+            Flux.fromArray(migrations)
+                .flatMap { migrationFile ->
+                    migrate(migrationFile, conn)
+                }.blockLast()
+        }
+    }
+
+    private fun migrate(fileName: String, connection: PostgresqlConnection): Flux<PostgresqlResult> {
+        return javaClass.classLoader.getResourceAsStream(fileName)
+            ?.bufferedReader()
+            ?.readText()
+            ?.let { query ->
+                connection.createStatement(query).execute()
+            } ?: Flux.empty()
     }
 
     companion object {
